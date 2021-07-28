@@ -131,8 +131,16 @@ __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 call R_MFS_DIRNEXT  ; Seek to next dir entry
                 jp nz,__rsd_pdirnxt ; If not eod, print next
                 
-                ; TODO: Get user to enter file name
-                jp z,__rsd_exit     ; Else exit
+                ; Get user to enter file name
+                call R_SER_CLEAR    ; Clear serial buffer
+                ld DE,st_promptstr
+                call R_SER_PRINT    ; Prompt for input
+                ld HL,_MFS_USERLBL  ; Temporarily use MFS buffer for string input
+                ld E,0x1F           ; Allow 31 characters to be typed
+                call R_SER_RECVLINE_ECHO ; Receive string input visible to terminal
+                ld DE,_MFS_USERLBL  ; Look back at MFS buffer
+                call R_SER_PRINT    ; Echo back what was entered
+                jp __rsd_exit       ; Else exit
                 
 __rsd_fail_io:  ld DE,st_mfs_ernohw
                 call R_SER_PRINT
@@ -154,6 +162,44 @@ __rsd_fail_oth: ld DE,st_mfs_eroth
 
 __rsd_exit:     jp start            ; Abort and restart firmware
 
+
+; ==============================================================================
+; R_MALLOC_STACK: Allocated N bytes on the stack
+;
+; Allocates N bytes on the stack, adjusting the stack pointer and returning the
+; memory location in HL.
+;
+; ARG: A provides number of bytes to allocate where 0 means 256
+; RET: HL stores lowest address of allocated memory
+; MOD: AF, HL, SP
+; ==============================================================================
+R_MALLOC_STACK:
+                ; Decrement SP N times
+__mlcnext:      dec SP
+                dec A
+                jp nz,__mlcnext
+                
+                ; Make SP accessible
+                ld HL,0x00
+                add HL,SP
+                ret
+
+
+; ==============================================================================
+; R_FREE_STACK: Deallocates N bytes on the stack
+;
+; Allocates N bytes on the stack, adjusting the stack pointer and returning the
+; memory location in HL.
+;
+; ARG: A provides number of bytes to deallocate where 0 means 256
+; MOD: AF, SP
+; ==============================================================================
+R_MALLOC_STACK:
+                ; Decrement SP N times
+__mfrnext:      inc SP
+                dec A
+                jp nz,__mfrnext
+                ret
 
 ; ==============================================================================
 ; Main routine: create a serial echo
@@ -305,6 +351,8 @@ st_mfs_eroth:   db "An unrecognized error occurred! Aborting.",10,0
 st_mfs_dirhead: db 34,10,"File list: ",10,0
 
 st_mfs_vollbl:  db 10,"Volume label: ",34,0
+
+st_promptstr:   db 10," > ",0
 
 st_mfs_fnamest: db "  ",34,0
 

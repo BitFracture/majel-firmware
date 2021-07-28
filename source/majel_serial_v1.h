@@ -18,3 +18,11 @@ SER_CACHE_LOC   equ _SER_IODAT                   ; Always points to last allocat
 
 ; Commands for serial card
 _SER_CMD_AVAIL  equ 0x01        ; Serial command, num bytes available
+
+; Important characters
+_SER_CH_CR      equ 0x0D
+_SER_CH_LF      equ 0x0A
+_SER_CH_LOWEST  equ 0x20
+_SER_CH_HIGHEST equ 0x7E
+_SER_CH_DEL     equ 0x7F
+_SER_CH_BCK     equ 0x08

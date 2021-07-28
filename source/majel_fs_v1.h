@@ -24,8 +24,7 @@ _MFS_LONGSIZE   equ 8
 _MFS_BYTESIZE   equ 1
 
 ; Gen vars
-_MFS_USERLBL    equ MFS_MAX_ADDR  - _MFS_LABELSIZE  ; User input label
-_MFS_BFFRLBL    equ _MFS_USERLBL  - _MFS_LABELSIZE  ; FS label buffer
+_MFS_BFFRLBL    equ MFS_MAX_ADDR  - _MFS_LABELSIZE  ; FS label buffer
 _MFS_GENLONG0   equ _MFS_BFFRLBL  - _MFS_LONGSIZE   ; General purpose num
 _MFS_GENLONG1   equ _MFS_GENLONG0 - _MFS_LONGSIZE   ; General purpose num
 _MFS_GENLONG2   equ _MFS_GENLONG1 - _MFS_LONGSIZE   ; General purpose num
