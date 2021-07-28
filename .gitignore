@@ -1,0 +1,6 @@
+*.sym
+*.bin
+*.img
+desktop.ini
+Thumbs.db
+._*
