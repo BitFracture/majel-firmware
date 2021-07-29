@@ -333,12 +333,12 @@ st_eraseone:    db 0x08,0x20,0x08,0
 ; Library implementations
 ; ==============================================================================
 
-                include "majel_math_v1.asmz80"
-                include "majel_strings_v1.asmz80"
-                include "majel_stack_v1.asmz80"
-                include "majel_ioseek_v1.asmz80"
-                include "majel_serial_v1.asmz80"
-                include "majel_fs_v1.asmz80"
+                include "majel_math_v1.asm"
+                include "majel_strings_v1.asm"
+                include "majel_stack_v1.asm"
+                include "majel_ioseek_v1.asm"
+                include "majel_serial_v1.asm"
+                include "majel_fs_v1.asm"
 
 
 ; ==============================================================================
