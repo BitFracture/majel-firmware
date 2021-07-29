@@ -80,7 +80,6 @@ __rcvwait:      call R_SER_WAIT     ; Wait for characters
                 ld BC,(_SER_IODAT)  ; Set up IO for serial data
                 ld B,A              ; Store char count in B
 __rcvnext:      in A,(C)            ; Read a character A
-                dec B               ; One char consumed
                 
                 ; If A is newline, submit and return
                 cp A,_SER_CH_LF
@@ -130,6 +129,7 @@ __rcvinrange:   ; This is a visible character and we have room for it
                 out (C),A           ; Echo character to terminal
                 
 __rcvhasmore:   ; Are there any more characters waiting?
+                dec B               ; One char consumed
                 jp z,__rcvwait      ; No more chars, block wait again    
                 jp __rcvnext        ; More chars exist, process the next one!
 
