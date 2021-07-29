@@ -44,7 +44,7 @@ __rp_ldchar:    ld A,(DE)           ; Load character
                 inc DE              ; Next pointer
                 cp $00              ; Is character in 'a' null?
                 jp z,__rp_done      ; If so, routine done
-                out (C),A   ; Send character
+                out (C),A           ; Send character
                 jp __rp_ldchar      ; Loop to send next char
                 
 __rp_done:      pop AF
@@ -71,6 +71,8 @@ __rp_done:      pop AF
 R_SER_RECVLINE_ECHO:
                 push BC
                 push AF
+                push DE
+                push HL
                 ld D,0              ; Length tracker starts at 0
 
                 ; Waiting and getting a character
@@ -85,6 +87,8 @@ __rcvnext:      in A,(C)            ; Read a character A
                 jp nz,__rcvlnc1     ; If not an LF, do next check
                 out (C),A           ; Echo the newline
                 ld (HL),0x00        ; Terminate buffer
+                pop HL
+                pop DE
                 pop AF
                 pop BC
                 ret

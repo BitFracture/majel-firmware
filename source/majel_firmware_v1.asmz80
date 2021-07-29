@@ -43,7 +43,7 @@ OPT_MEMT:       equ 0x35            ; "5"
 OPT_ECHO:       equ 0x36            ; "6"
 
 
-                org 0000h           ; Starting location
+                org 0x0000          ; Starting location
 start:          ld sp,STACK_START   ; Init stack for 64KB RAM
                 call R_SER_INIT     ; Locate the serial port
                 jp nz,__serialfound ; Serial was found
@@ -135,12 +135,16 @@ __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 call R_SER_CLEAR    ; Clear serial buffer
                 ld DE,st_promptstr
                 call R_SER_PRINT    ; Prompt for input
-                ld HL,_MFS_USERLBL  ; Temporarily use MFS buffer for string input
+                ld A,0x20           ; Allocate 32 byte stack buffer
+                call R_MALLOC_STACK ; Leaves HL pointing to new 32-byte memory
                 ld E,0x1F           ; Allow 31 characters to be typed
                 call R_SER_RECVLINE_ECHO ; Receive string input visible to terminal
-                ld DE,_MFS_USERLBL  ; Look back at MFS buffer
+                ld DE,HL            ; Point print to the stack buffer
                 call R_SER_PRINT    ; Echo back what was entered
-                jp __rsd_exit       ; Else exit
+                
+                ld A,0x20           ; Deallocate stack buffer
+                call R_FREE_STACK
+                jp __rsd_exit       ; exit
                 
 __rsd_fail_io:  ld DE,st_mfs_ernohw
                 call R_SER_PRINT
@@ -162,44 +166,6 @@ __rsd_fail_oth: ld DE,st_mfs_eroth
 
 __rsd_exit:     jp start            ; Abort and restart firmware
 
-
-; ==============================================================================
-; R_MALLOC_STACK: Allocated N bytes on the stack
-;
-; Allocates N bytes on the stack, adjusting the stack pointer and returning the
-; memory location in HL.
-;
-; ARG: A provides number of bytes to allocate where 0 means 256
-; RET: HL stores lowest address of allocated memory
-; MOD: AF, HL, SP
-; ==============================================================================
-R_MALLOC_STACK:
-                ; Decrement SP N times
-__mlcnext:      dec SP
-                dec A
-                jp nz,__mlcnext
-                
-                ; Make SP accessible
-                ld HL,0x00
-                add HL,SP
-                ret
-
-
-; ==============================================================================
-; R_FREE_STACK: Deallocates N bytes on the stack
-;
-; Allocates N bytes on the stack, adjusting the stack pointer and returning the
-; memory location in HL.
-;
-; ARG: A provides number of bytes to deallocate where 0 means 256
-; MOD: AF, SP
-; ==============================================================================
-R_MALLOC_STACK:
-                ; Decrement SP N times
-__mfrnext:      inc SP
-                dec A
-                jp nz,__mfrnext
-                ret
 
 ; ==============================================================================
 ; Main routine: create a serial echo
@@ -369,6 +335,7 @@ st_eraseone:    db 0x08,0x20,0x08,0
 
                 include "majel_math_v1.asmz80"
                 include "majel_strings_v1.asmz80"
+                include "majel_stack_v1.asmz80"
                 include "majel_ioseek_v1.asmz80"
                 include "majel_serial_v1.asmz80"
                 include "majel_fs_v1.asmz80"
