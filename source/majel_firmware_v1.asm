@@ -43,7 +43,7 @@ OPT_MEMT:       equ 0x35            ; "5"
 OPT_ECHO:       equ 0x36            ; "6"
 
 
-                org 0000h           ; Starting location
+                org 0x0000          ; Starting location
 start:          ld sp,STACK_START   ; Init stack for 64KB RAM
                 call R_SER_INIT     ; Locate the serial port
                 jp nz,__serialfound ; Serial was found
@@ -131,8 +131,20 @@ __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 call R_MFS_DIRNEXT  ; Seek to next dir entry
                 jp nz,__rsd_pdirnxt ; If not eod, print next
                 
-                ; TODO: Get user to enter file name
-                jp z,__rsd_exit     ; Else exit
+                ; Get user to enter file name
+                call R_SER_CLEAR    ; Clear serial buffer
+                ld DE,st_promptstr
+                call R_SER_PRINT    ; Prompt for input
+                ld A,0x20           ; Allocate 32 byte stack buffer
+                call R_MALLOC_STACK ; Leaves HL pointing to new 32-byte memory
+                ld E,0x1F           ; Allow 31 characters to be typed
+                call R_SER_RECVLINE_ECHO ; Receive string input visible to terminal
+                ld DE,HL            ; Point print to the stack buffer
+                call R_SER_PRINT    ; Echo back what was entered
+                
+                ld A,0x20           ; Deallocate stack buffer
+                call R_FREE_STACK
+                jp __rsd_exit       ; exit
                 
 __rsd_fail_io:  ld DE,st_mfs_ernohw
                 call R_SER_PRINT
@@ -306,6 +318,8 @@ st_mfs_dirhead: db 34,10,"File list: ",10,0
 
 st_mfs_vollbl:  db 10,"Volume label: ",34,0
 
+st_promptstr:   db 10," > ",0
+
 st_mfs_fnamest: db "  ",34,0
 
 st_mfs_fnamend: db 34,10,0
@@ -319,11 +333,12 @@ st_eraseone:    db 0x08,0x20,0x08,0
 ; Library implementations
 ; ==============================================================================
 
-                include "majel_math_v1.asmz80"
-                include "majel_strings_v1.asmz80"
-                include "majel_ioseek_v1.asmz80"
-                include "majel_serial_v1.asmz80"
-                include "majel_fs_v1.asmz80"
+                include "majel_math_v1.asm"
+                include "majel_strings_v1.asm"
+                include "majel_stack_v1.asm"
+                include "majel_ioseek_v1.asm"
+                include "majel_serial_v1.asm"
+                include "majel_fs_v1.asm"
 
 
 ; ==============================================================================

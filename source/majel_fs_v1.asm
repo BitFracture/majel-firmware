@@ -43,8 +43,7 @@ R_MFS_SETUP:
                 ld (_MFS_IODAT),A
                 ld (_MFS_FLAGS),A
                 
-                ; Blank-terminate string buffers
-                ld (_MFS_USERLBL),A
+                ; Blank-terminate string buffer
                 ld (_MFS_BFFRLBL),A
                 
                 pop BC
