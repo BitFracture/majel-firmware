@@ -24,21 +24,13 @@ R_MFS_SETUP:
                 ; Zero-write longs
                 ld BC,_MFS_BLOCK
                 call R_ZINT64
-                ld BC,_MFS_GENLONG0
-                call R_ZINT64
-                ld BC,_MFS_GENLONG1
-                call R_ZINT64
-                ld BC,_MFS_GENLONG2
-                call R_ZINT64
-                ld BC,_MFS_GENLONG3
-                call R_ZINT64
                 ld BC,_MFS_ZEROLONG
                 call R_ZINT64
                 
                 ; Zero-write bytes
                 ld A,0x00
                 ld (_MFS_OFFSET),A
-                ld (_MFS_TRUNC),A
+                ld (_MFS_BLKTRUNC),A
                 ld (_MFS_IOCMD),A
                 ld (_MFS_IODAT),A
                 ld (_MFS_FLAGS),A
@@ -245,15 +237,15 @@ R_MFS_GETLBL:
                 jp z,__fslbl_done   ; Abort if not idle
                 
                 ; Go to block 0 offset 64
-                ld BC,_MFS_GENLONG0
+                ld BC,_MFS_BLOCK
                 call R_ZINT64
                 ld A,_MFS_OFFSET_FSLBL
-                ld (_MFS_GENLONG0),A
+                ld (_MFS_OFFSET),A
                 
                 ld BC,(_MFS_IOCMD)
                 ld A,_CMD_SETADDR
                 out (C),A
-                M_SENDN 8,_MFS_GENLONG0
+                M_SENDN 8,_MFS_ADDRESS
                 
                 ; Get label
                 ld BC,(_MFS_IODAT)
@@ -267,12 +259,78 @@ __fslbl_done:   ld HL,_MFS_BFFRLBL
 
 
 ; ==============================================================================
-; R_MFS_OPEN: Open a file
+; R_MFS_OPENFILE: Open a file for reading
+;
+; Seeks the directory sequentially to find a file with a matching label to (HL).
+; If one is found, that file is loaded 
 ; 
-; RET: DE contains the pointer to the new memory space
-; MOD: DE, BC
+; ARG: HL contains pointer to file label to open
+; RET: A contains error state if nonzero
+;      MFS_ERRCD_OPEN = A file or directory is already open
+;      MFS_ERRCD_NOT_FOUND = File was not found by label
+; MOD: HL, AF
 ; ==============================================================================
-R_MFS_OPEN:
+R_MFS_OPENFILE:
+                push DE
+                push BC
+
+                ; Check for valid state
+                call R_MFS_ISIDLE   ; Only proceed if FS driver is idle    
+                jp nz,__openfscan
+                ld A,MFS_ERRCD_OPEN
+                jp __openfdone      ; Exit
+
+__openfscan:    ; Open the directory and see if we can find this file
+                call R_MFS_OPENDIR  ; Open directory
+__openfscanlp:  jp z,__openfnf      ; End of dir
+                push HL             ; Back up user label pointer
+                call R_MFS_GETDIRLBL ; Read dir label, now (HL)
+                pop DE              ; User label at (DE)
+                push DE             ; Back up user label again
+                call R_STRCMP       ; Compare (DE), (HL)
+                pop HL              ; Restore user label at (HL)
+                jp z,__openffound   ; We found a file!
+                call R_MFS_DIRNEXT  ; Seek next dir
+                jp __openfscanlp    ; Loop and look at this dir entry
+                
+__openffound:   ; File is found, take note of it in variables
+                ld HL,_MFS_BLOCK
+                ld DE,_MFS_FDIRBLK
+                ld BC,0x0008        ; Copy 8 bytes from current blk to fdir blk
+                ldir                ; Load, increment, repeat
+                ld A,(_MFS_DIRINDEX)
+                ld (_MFS_FDIRINDEX),A ; Copy dir index to file dir index
+                
+                ; Get directory file head
+                call _R_MFS_SETDIROFFSET
+                call R_MFS_CLOSEDIR ; Close directory walk
+                ld A,(_MFS_OFFSET)  ; Seek address to offset for file head    
+                add A,_MFS_OFFSET_DIRFILEBLK
+                ld (_MFS_OFFSET),A
+                ld BC,(_MFS_IOCMD)
+                ld A,_CMD_SETADDR
+                out (C),A           ; Set address on SD card    
+                M_SENDN 8,_MFS_ADDRESS
+                ld BC,(_MFS_IODAT)
+                M_RECVN 8,_MFS_BLOCK ; Get file block head
+                
+                ; Mark the truncation as 0 so the READ method knows to load truncation
+                ld A,0x00
+                ld (_MFS_BLKTRUNC),A
+                
+                ; Mark open file indicators
+                ld A,(_MFS_FLAGS)
+                set _MFSFLG_OPEN,A  ; File is open
+                res _MFSFLG_IDLE,A  ; Not idle
+                ld (_MFS_FLAGS),A
+                ld A,0x00           ; Indicate no error
+                jp __openfdone      ; Exit
+                
+__openfnf:      ld A,MFS_ERRCD_NOT_FOUND
+
+__openfdone:    ; Restore registers and exit
+                pop BC
+                pop DE
                 ret
 
 
@@ -287,14 +345,138 @@ R_MFS_WRITE:
 
 
 ; ==============================================================================
+; _R_MFS_ISBLKNULL: Checks if block address is zero
+; 
+; RET: F.Z if block is null
+; MOD: AF
+; ==============================================================================
+_R_MFS_ISBLKNULL:
+                push BC
+                push DE
+                push HL
+                ld DE,_MFS_BLOCK
+                ld HL,_MFS_ZEROLONG
+                call R_CMPINT64
+                pop HL
+                pop DE
+                pop BC
+                ret
+
+
+; ==============================================================================
+; R_MFS_CLOSEFILE: Close an open file
+; 
+; ARG: 
+; ==============================================================================
+R_MFS_CLOSEFILE:
+                call R_MFS_ISFILEOPEN
+                ret z               ; Abort if file not open
+                ld A,(_MFS_FLAGS)
+                res _MFSFLG_OPEN,A  ; File is not open
+                set _MFSFLG_IDLE,A  ; We are idle
+                ld (_MFS_FLAGS),A
+                ret
+
+
+; ==============================================================================
 ; R_MFS_READ: Read from open file
 ; 
-; RET: DE contains the pointer to the new memory space
+; ARG: DE contains the maximal number of bytes to read, 0 means 64K
+; ARG: HL contains the pointer to copy data to
+; RET: HL points to the next unwritten address
+; RET: F.Z indicates end of file
 ; MOD: DE, BC
 ; ==============================================================================
 R_MFS_READ:
+                call R_MFS_ISFILEOPEN
+                ret z               ; Abort if file not open
+                
+                ; Is the block null? If so we're at EOF
+                call _R_MFS_ISBLKNULL
+                ret z               ; Abort if block is null
+
+                ; If first block, need to load truncation but blk already loaded
+                ld (_MFS_BLKTRUNC),A
+                cp 0x00
+                jp z,__fsrdloadtrcp ; Probably our first time reading
+                
+                ; Is the offset currently equal to the limit?
+__fsrdnxtbyte:  ld A,(_MFS_BLKTRUNC)
+                ld B,A
+                ld A,(_MFS_BLKINDEX)
+                cp A,B
+                jp nc,__fsrdnxtblk  ; No borrow means index >= truncation
+                
+                ; Next byte
+                ld BC,(_MFS_IODAT)
+                in A,(C)            ; Read a byte
+                ld (HL),A           ; Store byte
+                inc HL              ; HL to next address
+__fsrdnz:       ld A,(_MFS_BLKINDEX)
+                inc A               ; Increment index
+                ld (_MFS_BLKINDEX),A
+                dec DE              ; Decrement bytes permitted
+                ld A,0x00
+                cp A,D              
+                jp nz,__fsrdnxtbyte ; Nonzero means more bytes permitted to copy
+                cp A,E
+                jp nz,__fsrdnxtbyte ; Nonzero means more bytes permitted to copy
+                jp __fsrddoneclr    ; No more bytes permitted
+                
+__fsrdnxtblk:   ; Next block
+                push HL             ; Back up HL for bulk I/O
+                ld A,_MFS_OFFSET_NXTBLK
+                ld (_MFS_OFFSET),A  ; Set offset to next block pointer
+                ld BC,(_MFS_IOCMD)
+                ld A,_CMD_SETADDR
+                out (C),A           ; Set address cmd
+                M_SENDN 8,_MFS_ADDRESS
+                
+                ld BC,(_MFS_IODAT)
+                M_RECVN 8,_MFS_BLOCK ; Point to next file block
+                call _R_MFS_ISBLKNULL
+                jp z,__fsrdnullhlr  ; Abort if block is null
+__fsrdloadtrc:  ld A,_MFS_OFFSET_FTRUNC ; Get file truncation
+                ld (_MFS_OFFSET),A  ; Store as address offset
+                
+                ld BC,(_MFS_IOCMD)
+                ld A,_CMD_SETADDR
+                out (C),A           ; Seek to next block
+                M_SENDN 8,_MFS_ADDRESS
+                
+                ; Read new block truncation
+                ld BC,(_MFS_IODAT)
+                in A,(C)            ; Read truncation byte
+                cp A,0x00           ; If zero, read full block
+                jp z,__fsrdfull     ; Default truncation value then store
+                jp __fsrdsttrunc    ; Store truncation
+__fsrdfull:     ld A,_MFS_TRUNCMAX  ; Default to max truncation
+__fsrdsttrunc:  ld (_MFS_BLKTRUNC),A ; Store file truncation
+                ld A,0x00
+                ld (_MFS_BLKINDEX),A ; Reset block index
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)
+                in A,(C)            ; Blowing through 9 unnecessary bytes
+                pop HL              ; Restore HL address
+                jp __fsrdnxtbyte    ; Read next byte
+                
+__fsrddoneclr:  ; Done reading bytes
+                ld C,0xFF
+                ld A,0x00
+                cp A,C              ; Clear zero bit
                 ret
 
+__fsrdloadtrcp: push HL             ; Back up HL pointer
+                jp __fsrdloadtrc    ; Parse first block
+                
+__fsrdnullhlr:  pop HL              ; Abort z condition after restoring HL
+                ret
 
 ; ==============================================================================
 ; R_MFS_SEEK: Seek in open file
@@ -317,11 +499,27 @@ R_MFS_RSEEK:
 
 
 ; ==============================================================================
+; R_MFS_CLOSEDIR: Stop directory walk
+; 
+; MOD: AF
+; ==============================================================================
+R_MFS_CLOSEDIR:  ; Ensure we're in a good state
+                call R_MFS_ISDIROPEN
+                ret z
+                
+                ; Set the flags to indicate dir is open
+                ld A,(_MFS_FLAGS)
+                res _MFSFLG_DIR,A   ; Indicate we are NOT reading dir
+                set _MFSFLG_IDLE,A  ; Indicate we are idling
+                ld (_MFS_FLAGS),A
+                ret
+                
+
+; ==============================================================================
 ; R_MFS_OPENDIR: Initiate directory walk
 ; 
 ; See R_MFS_DIRNEXT for input/output
 ; ==============================================================================
-_MFS_DIRINDEX:  equ _MFS_GENBYTE0   ; Use general byte 0 to hold onto dir index
 R_MFS_OPENDIR:  push HL
                 push DE
                 push BC

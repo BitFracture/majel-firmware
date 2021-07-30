@@ -120,7 +120,7 @@ __rsd_success:  ld DE,st_mfs_vollbl
                 
                 ; Print out directory entries
                 call R_MFS_OPENDIR  ; Opens the directory
-                jp z,__rsd_exit     ; If empty dir, exit
+                jp z,__rsd_prompt    ; If empty dir, skip over
 __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 call R_SER_PRINT    ; Prefix formatting
                 call R_MFS_GETDIRLBL
@@ -132,6 +132,7 @@ __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 jp nz,__rsd_pdirnxt ; If not eod, print next
                 
                 ; Get user to enter file name
+__rsd_prompt:   call R_MFS_CLOSEDIR ; Close directory walk
                 call R_SER_CLEAR    ; Clear serial buffer
                 ld DE,st_promptstr
                 call R_SER_PRINT    ; Prompt for input
@@ -139,13 +140,44 @@ __rsd_pdirnxt:  ld DE,st_mfs_fnamest
                 call R_MALLOC_STACK ; Leaves HL pointing to new 32-byte memory
                 ld E,0x1F           ; Allow 31 characters to be typed
                 call R_SER_RECVLINE_ECHO ; Receive string input visible to terminal
-                ld DE,HL            ; Point print to the stack buffer
-                call R_SER_PRINT    ; Echo back what was entered
+                
+                ; Ask MFS to open the file entered
+                call R_MFS_OPENFILE ; Open a file with name (HL)
+                ld B,A
                 
                 ld A,0x20           ; Deallocate stack buffer
                 call R_FREE_STACK
-                jp __rsd_exit       ; exit
                 
+                ld A,B              ; Restore file open response
+                cp 0x00
+                jp z,__rsd_found    ; File found!
+                cp A,MFS_ERRCD_NOT_FOUND
+                jp z, __rsd_fail_nf ; File not found!
+                jp __rsd_fail_oth   ; Other error
+                
+__rsd_found:    ; The file is found and open, time to load it!
+                ld DE,st_file_load
+                call R_SER_PRINT
+                
+                ; Load up to 1024 bytes of file data (temporary)
+                ld DE,0x0400        ; 1024 max length read
+                ld HL,0x8000        ; Org to upper 32K (temporary)
+                call R_MFS_READ
+                jp z,__rsd_eof
+                ld DE,st_filetrunc
+                call R_SER_PRINT    ; Print saying file was cut short
+                jp __rsd_closef
+__rsd_eof:      ld DE,st_filedone
+                call R_SER_PRINT    ; Print saying file is loaded in full
+__rsd_closef:   ld DE,st_filedonepk
+                call R_SER_PRINT    ; Press any key
+                call R_MFS_CLOSEFILE
+                
+                call R_SER_WAIT     ; Wait for a key
+                call R_SER_CLEAR    ; Clear serial buffer
+                jp 0x8000           ; Jump to loaded program! (temp addr)
+                
+                ; Error handle jump table
 __rsd_fail_io:  ld DE,st_mfs_ernohw
                 call R_SER_PRINT
                 jp __rsd_exit
@@ -159,6 +191,9 @@ __rsd_fail_fv:  ld DE,st_mfs_erbver
                 call R_SER_PRINT
                 jp __rsd_exit
 __rsd_fail_cn:  ld DE,st_mfs_erconn
+                call R_SER_PRINT
+                jp __rsd_exit
+__rsd_fail_nf:  ld DE,st_mfs_ernf
                 call R_SER_PRINT
                 jp __rsd_exit
 __rsd_fail_oth: ld DE,st_mfs_eroth
@@ -312,7 +347,17 @@ st_mfs_erbver:  db "The version of Majel-FS on this card is unsupported! Abortin
 
 st_mfs_erconn:  db "The SD card driver is already in use! Aborting.",10,0
 
+st_mfs_ernf:    db "That file was not found! Aborting.",10,0
+
 st_mfs_eroth:   db "An unrecognized error occurred! Aborting.",10,0
+
+st_file_load:   db "Your program is being loaded, please wait...",10,0
+
+st_filetrunc:   db "Your program was too long but was partially loaded",0
+
+st_filedone:    db "Your program is loaded",0
+
+st_filedonepk:  db ", press any key to start...",10,0
 
 st_mfs_dirhead: db 34,10,"File list: ",10,0
 
