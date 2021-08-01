@@ -159,23 +159,54 @@ __rsd_found:    ; The file is found and open, time to load it!
                 ld DE,st_file_load
                 call R_SER_PRINT
                 
-                ; Load up to 1024 bytes of file data (temporary)
-                ld DE,0x0400        ; 1024 max length read
-                ld HL,0x8000        ; Org to upper 32K (temporary)
-                call R_MFS_READ
+                ; Sort out how many bytes we can load
+                ld HL,0xFFEF        ; -16
+                add HL,SP           ; HL = SP - 16, sparing us some stack space
+                ld BC,HL            ; BC holds the max bytes we can safely load
+                ld HL,0x0000        ; Org to 0
+                
+                ; Calculate block size for next load
+__rsd_nxtblk:   ld D,B
+                ld E,C              ; DE holds max bytes
+                ex DE,HL            ; DE holds bytes loaded, HL holds max bytes
+                cp A,A              ; Clear cary
+                sbc HL,DE           ; HL is bytes permitted remaining
+                ex DE,HL            ; HL holds bytes loaded, DE holds bytes permitted remaining
+                push BC             ; Back up max bytes to load
+                ld A,D
+                cp A,0x04           ; Compare D to 4
+                jp nc,__rsd_fullblk ; No borrow means D >= 4, meaning DE is >= 1024 bytes remaining
+                
+                ; Preparing to read a partial block, ensure it isn't zero
+                ld A,0x00
+                cp A,D
+                jp nz,__rsd_rdblk   ; Read next block!
+                cp A,E
+                jp nz,__rsd_rdblk   ; Read next block!
+                jp __rsd_trunc      ; No more RAM left :(
+                
+__rsd_fullblk:  ; Prepare to read a full 1024B block
+                ld D,0x04
+                ld E,0x00           ; DE is 1024, HL point to next addr to write
+
+__rsd_rdblk:    ; Read the full or partial block
+                call R_MFS_READ     ; Read file (dirties BC)
+                ld A,0x2D           ; Hypthen character
+                call R_SER_SENDBYTE ; Send a hypthen (dirties BC)
+                pop BC              ; Restore max bytes to load
                 jp z,__rsd_eof
-                ld DE,st_filetrunc
+                jp __rsd_nxtblk
+                
+
+__rsd_trunc:    ld DE,st_filetrunc
                 call R_SER_PRINT    ; Print saying file was cut short
                 jp __rsd_closef
+
 __rsd_eof:      ld DE,st_filedone
                 call R_SER_PRINT    ; Print saying file is loaded in full
-__rsd_closef:   ld DE,st_filedonepk
-                call R_SER_PRINT    ; Press any key
-                call R_MFS_CLOSEFILE
-                
-                call R_SER_WAIT     ; Wait for a key
-                call R_SER_CLEAR    ; Clear serial buffer
-                jp 0x8000           ; Jump to loaded program! (temp addr)
+
+__rsd_closef:   call R_MFS_CLOSEFILE
+                jp R_PROGRAM_LAUNCHER ; Wait in RAM so ROM can be disabled
                 
                 ; Error handle jump table
 __rsd_fail_io:  ld DE,st_mfs_ernohw
@@ -353,11 +384,11 @@ st_mfs_eroth:   db "An unrecognized error occurred! Aborting.",10,0
 
 st_file_load:   db "Your program is being loaded, please wait...",10,0
 
-st_filetrunc:   db "Your program was too long but was partially loaded",0
+st_filetrunc:   db 10,"Your program was too long but was partially loaded",10,0
 
-st_filedone:    db "Your program is loaded",0
+st_filedone:    db 10,"Your program is loaded",10,0
 
-st_filedonepk:  db ", press any key to start...",10,0
+st_filedonepk:  db "Change the RAM/ROM switch to RAM, then press any key to start",10,0
 
 st_mfs_dirhead: db 34,10,"File list: ",10,0
 
@@ -373,7 +404,6 @@ st_mfs_choose:  db 10,"Choose a program file by name: ",10,0
 
 st_eraseone:    db 0x08,0x20,0x08,0
 
-
 ; ==============================================================================
 ; Library implementations
 ; ==============================================================================
@@ -387,8 +417,48 @@ st_eraseone:    db 0x08,0x20,0x08,0
 
 
 ; ==============================================================================
+; Bootstrap the custom program launcher
+; ==============================================================================
+R_PROGRAM_LAUNCHER:
+                ld HL,org_pgm_launch    ; Program launcher in ROM
+                ld BC,launcher_len      ; Size of launcher routine
+                ld DE,launcher_start    ; Program launcher in RAM
+                ldir                    ; Copy program launcher to RAM
+                call R_SER_LOADCMD      ; Preload the serial card address
+                push BC
+                ld DE,st_filedonepk
+                call R_SER_PRINT        ; Let user know to toggle and press key
+                pop BC
+                ld A,_SER_CMD_AVAIL
+                out (C),A               ; Query for available byte count
+                jp launcher_start       ; Go to launcher in RAM
+                
+
+
+; ==============================================================================
+; Custom program launcher that runs in the stack
+; This program orgs to overwrite MajelFS program memory. At the point where 
+; this routine is used, MFS is not used anymore and can be corrupted safely. 
+; Since this routine is moved to RAM, the ROM switch can safely be changed
+; while in this routine.
+; ==============================================================================
+end_of_firm:    db 0x00
+org_pgm_launch: equ end_of_firm+1
+                
+                ; Org to MFS memory space above stack, rorg below existing code
+                org MFS_CACHE_LOC,org_pgm_launch
+                
+launcher_start: ; Actual routine is here
+                in A,(C)                ; Get available bytes
+                jp z,launcher_start     ; No key presses, re-check
+                jp 0x0000               ; Go to loaded program now
+                
+launcher_end:   
+launcher_len:   equ launcher_end-launcher_start  ; Size of launcher
+
+; ==============================================================================
 ; End of firmware marker used for firmware copy
 ; ==============================================================================
 
-end_of_file:    db 0x00
+end_of_file:    equ end_of_firm+launcher_len
 

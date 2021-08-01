@@ -162,6 +162,18 @@ R_SER_SENDBYTE:
 
 
 ; ==============================================================================
+; R_SER_LOADCMD: Load command port C
+;
+; Leaves C pointing to the serial command port and returns.
+;
+; MOD: BC
+; ==============================================================================
+R_SER_LOADCMD:
+                ld BC,(_SER_IOCMD)  ; Read/write serial commands
+                ret
+
+
+; ==============================================================================
 ; R_SER_WAIT: Wait for serial
 ;
 ; Will block waiting until serial data is available to read
