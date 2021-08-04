@@ -17,7 +17,9 @@ _SER_IODAT:     equ _SER_IOCMD   - _SER_BYTESIZE ; Pointer to serial I/O data po
 SER_CACHE_LOC   equ _SER_IODAT                   ; Always points to last allocation
 
 ; Commands for serial card
-_SER_CMD_AVAIL  equ 0x01        ; Serial command, num bytes available
+_SER_CMD_AVAIL  equ 0x01        ; Get num bytes available
+_SER_CMD_SETINT equ 0x02        ; Set interrupt vector
+_SER_CMD_CLRINT equ 0x03        ; Clear interrupt vector
 
 ; Important characters
 _SER_CH_CR      equ 0x0D
