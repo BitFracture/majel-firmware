@@ -36,15 +36,16 @@ IOTBL_MAX_ADDR: equ MFS_CACHE_LOC   ; Place the IO table below MFS but above the
 STACK_START:    equ IOTBL_LOC       ; Start stack right under the IO table
                 
 OPT_GOTO:       equ 0x31            ; "1"
-OPT_RECV:       equ 0x32            ; "2"
-OPT_FILE:       equ 0x33            ; "3"
+OPT_FILE:       equ 0x32            ; "2"
+OPT_MEMT:       equ 0x33            ; "3"
 OPT_COPY:       equ 0x34            ; "4"
-OPT_MEMT:       equ 0x35            ; "5"
-OPT_ECHO:       equ 0x36            ; "6"
+OPT_ECHO:       equ 0x35            ; "5"
+OPT_INTR:       equ 0x36            ; "6"
 
 
                 org 0x0000          ; Starting location
-start:          ld sp,STACK_START   ; Init stack for 64KB RAM
+start:          di                  ; Disable interrupts
+                ld sp,STACK_START   ; Init stack for 64KB RAM
                 call R_SER_INIT     ; Locate the serial port
                 jp nz,__serialfound ; Serial was found
                 halt                ; Serial was NOT found!
@@ -60,22 +61,22 @@ __choices:      call R_SER_WAIT     ; Wait for a char
                 call R_SER_SENDBYTE ; Echo char
                 
                 cp OPT_GOTO
-                jp z,__invalid      ; Todo: Implement this
+                jp z,__invalid      ; Todo: Jump to upper RAM bank
                 
-                cp OPT_RECV
-                jp z,__invalid      ; Todo: Implement this
+                cp OPT_INTR
+                jp z,R_ECHO_INT     ; Echo back in interrupt fashion
                 
                 cp OPT_FILE
-                jp z,R_LOAD_SD      ; Todo: Implement this
+                jp z,R_LOAD_SD      ; Load a file
                 
                 cp OPT_COPY
-                jp z,R_CPY_TO_RAM   ; Todo: Implement this
+                jp z,R_CPY_TO_RAM   ; Copy firmware to RAM
                 
                 cp OPT_MEMT
-                jp z,R_MEMTEST      ; Todo: Implement this
+                jp z,R_MEMTEST      ; Todo: Will be a memory test
                 
                 cp OPT_ECHO
-                jp z,R_ECHO         ; Todo: Implement this
+                jp z,R_ECHO         ; Echo back in blocking fashion
                 
 __invalid:      ld de,st_eraseone   ; Erase one char
                 call R_SER_PRINT
@@ -234,7 +235,7 @@ __rsd_exit:     jp start            ; Abort and restart firmware
 
 
 ; ==============================================================================
-; Main routine: create a serial echo
+; Main routine: create a blocking, synchronous serial echo
 ; ==============================================================================
 R_ECHO:
                 ld DE,st_kbwel      ; Load the string pointer
@@ -248,6 +249,37 @@ __ech_outloop:  call R_SER_RECVBYTE ; Get a byte
                 dec D
                 jp nz,__ech_outloop ; More bytes left!
                 jp __ech_waitblk    ; Block on more bytes
+
+
+; ==============================================================================
+; Main routine: create a non-blocking interrupt serial echo
+; ==============================================================================
+R_ECHO_INT:
+                ld A,hi(INT_VECTORS)
+                ld I,A              ; Set up interrupt vector table
+                ld DE,st_kbwel      ; Load the string pointer
+                call R_SER_PRINT    ; Print (DE)
+                ld A,lo(INTV_SERECHO) ; Serial echo jump vector
+                ld D,A
+                call R_SER_SETINTV  ; Set serial interrupt vector
+                im 2                ; Interrupt vectoring mode
+                ei                  ; Interrupts enabled!
+__echasynchalt: halt                ; Interrupts will resume operation
+                jp __echasynchalt
+
+                ; Normally we would back up registers, but CPU is halted
+IR_SERIAL_ECHO: 
+                call R_SER_COUNT    ; Count number of bytes available
+                ld D,A              ; Number bytes available
+                ld A,0x00
+                cp D                ; D==0?
+                jp z,__echas_done   ; Return if no bytes
+__echas_outlp:  call R_SER_RECVBYTE ; Get a byte
+                call R_SER_SENDBYTE ; Echo the byte
+                dec D
+                jp nz,__echas_outlp ; More bytes left?
+__echas_done:   ei                  ; Re-enable interrupts
+                reti                ; Get us outta hereeree
 
 
 ; ==============================================================================
@@ -333,18 +365,18 @@ R_MEMCPY:
 
 
 ; ==============================================================================
-; String tables
+; String table
 ; ==============================================================================
                 
 st_wel:         db 10,"MAJEL-1 BOOTLOADER v0.1.0",10,"Built July 27th, 2021",10,"Created May 11th, 2021",10,0
 
 st_optmain:     db 10,"Choose a boot option",10
-                db 10,"1) Go to a memory location",10
-                db "2) Receive a program from serial",10
-                db "3) Choose a program from a storage device",10
+                db 10,"1) Execute upper RAM bank at 0x8000",10
+                db "2) Choose a program from a storage device",10
+                db "3) Run a memory test",10
                 db "4) Copy this firmware to RAM",10
-                db "5) Run a memory test",10
-                db "6) Keyboard echo demo",10,10
+                db "5) Synchronous keyboard echo demo",10
+                db "6) Asynchronous keyboard echo demo",10,10
                 db "#> ",0
 
 st_kbwel:       db 10,10,"Keyboard Echo Demo",10,"Everything you type will echo back to you.",10,10,0
@@ -414,6 +446,16 @@ st_eraseone:    db 0x08,0x20,0x08,0
                 include "majel_ioseek_v1.asm"
                 include "majel_serial_v1.asm"
                 include "majel_fs_v1.asm"
+
+
+; ==============================================================================
+; Interrupt vector table
+; ==============================================================================
+__temp_ivt_marker: db 0x00              ; Used to bump intv table
+                org (hi(__temp_ivt_marker) + 1) << 8 ; Calc next full block!
+INT_VECTORS:    
+                ; Serial echo interrupt vector
+INTV_SERECHO:   dw IR_SERIAL_ECHO
 
 
 ; ==============================================================================

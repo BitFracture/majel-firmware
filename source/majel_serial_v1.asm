@@ -13,7 +13,7 @@
 ; This routine will HALT the system if serial cannot be initialized.
 ;
 ; RET: F.Z indicates failure to find the serial card
-; MOD: BC, DE, AF
+; MOD: AF, BC, DE, AF
 ; ==============================================================================
 R_SER_INIT:     
                 call R_IO_SCANALL   ; Scan for all hardware device IDs
@@ -24,6 +24,9 @@ R_SER_INIT:
 __insr_fin:     ld C,B              ; Put data channel in C
                 inc B               ; Put command channel in B
                 ld (_SER_IODAT),BC  ; Store in RAM for other methods to use
+                call R_SER_CLRINTV  ; Clear any interrupt vectors
+                ld A,0x00
+                inc A               ; Clear zero
                 ret                 ; z is unset, successful find
 
 
@@ -189,6 +192,53 @@ __blk_waitlp:   in A,(C)            ; Number of bytes available
                 cp $00              ; Any bytes yet?
                 jp z,__blk_waitlp   ; Nope, check again
                 ret                 ; Bytes are available!
+
+
+; ==============================================================================
+; R_SER_COUNT: Count number of inbound bytes waiting
+;
+; Will return immediately with number of bytes available, non-blocking
+;
+; RET: A number of bytes available
+; MOD: AF, BC
+; ==============================================================================
+R_SER_COUNT:
+                ld A,_SER_CMD_AVAIL
+                ld BC,(_SER_IOCMD)
+                out (C),A           ; Ask for num serial bytes
+                in A,(C)            ; Number of bytes available
+                ret
+
+
+; ==============================================================================
+; R_SER_SETINTV: Set serial interrupt vector
+;
+; Enables serial interrupt triggering and sets an interrupt vector
+;
+; ARG: D the vector to use
+; MOD: AF, BC
+; ==============================================================================
+R_SER_SETINTV:
+                ld A,_SER_CMD_SETINT
+                ld BC,(_SER_IOCMD)
+                out (C),A           ; Cmd set interrupt vector
+                out (C),D           ; The interrupt vector
+                ret
+
+
+; ==============================================================================
+; R_SER_CLRINTV: Clear serial interrupt vector
+;
+; Disables serial interrupt triggering
+;
+; MOD: AF, BC
+; ==============================================================================
+R_SER_CLRINTV:
+                ld A,_SER_CMD_CLRINT
+                ld BC,(_SER_IOCMD)
+                out (C),A           ; Cmd clr interrupt vector
+                ret
+
 
 
 ; ==============================================================================
